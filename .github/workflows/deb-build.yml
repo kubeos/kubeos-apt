@@ -85,7 +85,12 @@ jobs:
       - name: lintian (packaging policy)
         run: |
           deb=$(ls -t ../${{ inputs.package }}_*.deb | head -1)
-          lintian --fail-on error "$deb"
+          if ! out=$(lintian --no-tag-display-limit --fail-on error "$deb" 2>&1); then
+            first=$(printf '%s\n' "$out" | grep -E '^E:' | head -5)
+            echo "::error title=lintian::$first"
+            { echo "### lintian"; echo '```'; printf '%s\n' "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: shellcheck (every shell script in the tree)
         run: |
