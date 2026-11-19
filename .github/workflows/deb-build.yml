@@ -1,0 +1,81 @@
+# KubeOS: the one build check every package repository uses.
+#
+# WHEN   on every push and pull request of a package repository - that repository calls this
+#        file with `uses:` and its own package name, so all ten share one definition.
+# WHY    nothing verified a package before it reached a node: a typo in a maintainer script, a
+#        file the debian/rules does not install, or a changelog that does not match the control
+#        file only showed up when someone tried to install the result. Here GitHub builds the
+#        .deb on a throwaway Ubuntu machine and fails the push, so the mistake is visible in the
+#        repository instead of on a cluster.
+# WHAT IT DOES NOT DO: it never signs and never publishes, and it keeps nothing - the signing
+#        key stays on the KubeOS builder and the archive is the only place a node installs from.
+#        It also cannot catch runtime bugs; those need a live machine.
+name: deb-build
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: binary package this repository produces
+        required: true
+        type: string
+      build-deps:
+        description: extra apt packages this build needs (space separated)
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: how long the build may take
+        required: false
+        type: number
+        default: 25
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ inputs.package }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            debhelper dpkg-dev fakeroot lintian shellcheck file
+          if [ -n "${{ inputs.build-deps }}" ]; then
+            # shellcheck disable=SC2086  # a space separated list by construction
+            sudo apt-get install -y -qq --no-install-recommends ${{ inputs.build-deps }}
+          fi
+
+      - name: The declared Build-Depends must be satisfied
+        run: dpkg-checkbuilddeps
+
+      - name: Build the package
+        run: dpkg-buildpackage -b -us -uc
+
+      - name: Look at what was produced
+        run: |
+          deb=$(ls -t ../${{ inputs.package }}_*.deb | head -1)
+          echo "built: $(basename "$deb")"
+          dpkg-deb -f "$deb" Package Version Architecture Depends
+          echo "files in the package: $(dpkg-deb -c "$deb" | wc -l)"
+          # A package that ships nothing is almost always a debian/rules mistake.
+          [ "$(dpkg-deb -c "$deb" | wc -l)" -gt 0 ] || { echo "::error::the package is empty"; exit 1; }
+
+      - name: lintian (packaging policy)
+        run: |
+          deb=$(ls -t ../${{ inputs.package }}_*.deb | head -1)
+          lintian --fail-on error "$deb"
+
+      - name: shellcheck (every shell script in the tree)
+        run: |
+          git ls-files -z | xargs -0 file --mime-type 2>/dev/null |
+            awk -F': ' '$2 ~ /shellscript/ {print $1}' > /tmp/scripts.txt
+          if [ ! -s /tmp/scripts.txt ]; then echo "no shell scripts in this repository"; exit 0; fi
+          cat /tmp/scripts.txt
+          xargs -a /tmp/scripts.txt shellcheck -S warning
