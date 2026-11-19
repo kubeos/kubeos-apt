@@ -70,7 +70,8 @@ upload() {   # upload LOCAL REMOTE_PATH CACHE_CONTROL
         log "would upload $2 ($3)"
         return 0
     fi
-    rclone copyto --s3-no-check-bucket --header-upload "Cache-Control: $3" \
+    rclone copyto --s3-no-check-bucket --s3-disable-checksum \
+        --header-upload "Cache-Control: $3" \
         "$1" "$REMOTE/$2" || die "upload failed: $2"
     log "uploaded $2 ($3)"
 }
@@ -91,8 +92,9 @@ cp "$DEB" "$WORK/tree/$POOL_PATH"
 ( cd "$WORK/tree" && apt-ftparchive packages -- "$POOL_PATH" ) > "$WORK/stanza"
 [ -s "$WORK/stanza" ] || die "apt-ftparchive produced no stanza for $DEB"
 
-if fetch "$INDEX_DIR/Packages" "$WORK/Packages"; then
-    log "merging into the existing index"
+: > "$WORK/Packages"
+if fetch "$INDEX_DIR/Packages" "$WORK/Packages" && [ -s "$WORK/Packages" ]; then
+    log "merging into the existing index ($(grep -c '^Package: ' "$WORK/Packages" || true) package(s) listed)"
 else
     : > "$WORK/Packages"
     log "no existing index: this is the first publish into $SUITE/$COMPONENT"
@@ -100,20 +102,19 @@ fi
 
 # Drop every stanza of THIS package (one version per package per architecture), append
 # the new one. RS="" is awk's paragraph mode, so a record is exactly one stanza.
-{
-    awk -v want="$PKG" '
-        BEGIN { RS = ""; ORS = "\n\n" }
-        {
-            keep = 1
-            n = split($0, line, "\n")
-            for (i = 1; i <= n; i++) {
-                if (line[i] == "Package: " want) { keep = 0; break }
-            }
-            if (keep) print
+awk -v want="$PKG" '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    {
+        keep = 1
+        n = split($0, line, "\n")
+        for (i = 1; i <= n; i++) {
+            if (line[i] == "Package: " want) { keep = 0; break }
         }
-    ' "$WORK/Packages"
-    cat "$WORK/stanza"
-} > "$WORK/Packages.raw" || die "index merge failed"
+        if (keep) print
+    }
+' "$WORK/Packages" > "$WORK/kept" || die "index merge failed (filtering the old stanzas)"
+cat "$WORK/kept" "$WORK/stanza" > "$WORK/Packages.raw" \
+    || die "index merge failed (writing the new index)"
 
 # Exactly one blank line between stanzas, one trailing newline.
 awk 'BEGIN { RS = ""; ORS = "\n\n" } { print }' "$WORK/Packages.raw" > "$WORK/Packages.new"
