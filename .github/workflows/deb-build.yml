@@ -86,7 +86,9 @@ jobs:
         run: |
           deb=$(ls -t ../${{ inputs.package }}_*.deb | head -1)
           if ! out=$(lintian --no-tag-display-limit --fail-on error "$deb" 2>&1); then
+            # exit code 1 = policy errors (E: lines), exit code 2 = lintian itself failed; show both.
             first=$(printf '%s\n' "$out" | grep -E '^E:' | head -5)
+            [ -n "$first" ] || first=$(printf '%s\n' "$out" | tail -6)
             echo "::error title=lintian::$first"
             { echo "### lintian"; echo '```'; printf '%s\n' "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
             exit 1
