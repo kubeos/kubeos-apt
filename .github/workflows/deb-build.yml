@@ -46,14 +46,29 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            debhelper dpkg-dev fakeroot lintian shellcheck file
+            debhelper dpkg-dev fakeroot lintian shellcheck file devscripts equivs
           if [ -n "${{ inputs.build-deps }}" ]; then
             # shellcheck disable=SC2086  # a space separated list by construction
             sudo apt-get install -y -qq --no-install-recommends ${{ inputs.build-deps }}
           fi
 
+      # Take the dependencies from debian/control itself instead of guessing package names:
+      # mk-build-deps installs exactly what the control file declares (including virtual
+      # packages such as debhelper-compat), so this keeps working when a package grows a new
+      # Build-Depends. The check after it turns "unmet dependency" into a readable annotation
+      # rather than a line buried in a log nobody downloads.
+      - name: Install the Build-Depends from debian/control
+        run: |
+          sudo mk-build-deps --install --remove \
+            --tool "apt-get -y --no-install-recommends" debian/control
+
       - name: The declared Build-Depends must be satisfied
-        run: dpkg-checkbuilddeps
+        run: |
+          if ! out=$(dpkg-checkbuilddeps 2>&1); then
+            echo "::error title=unmet Build-Depends::$out"
+            { echo "### unmet Build-Depends"; echo '```'; echo "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Build the package
         run: dpkg-buildpackage -b -us -uc
