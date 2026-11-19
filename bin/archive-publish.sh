@@ -36,6 +36,13 @@ DRY_RUN=${KUBEOS_PUBLISH_DRY_RUN:-0}
 # that is the only check that catches a stale edge copy, which is what made apt answer
 # "Hash Sum mismatch" on 2026-11-19.
 ARCHIVE_URL=${KUBEOS_ARCHIVE_URL:-}
+# This archive normally refuses anything that is not a `kubeos-*` package, so it cannot
+# silently become a copy of somebody else's repo. The one deliberate exception is a
+# **byte-identical mirror** of a vendor deb whose updates KubeOS must gate itself (user
+# decision 2026-11-19: kubelet, kubeadm and kubectl ship from this archive, unchanged, so
+# `apt upgrade` can never move them to a version KubeOS has not vetted). Set to 1 only for
+# such a mirror; the file is then published exactly as downloaded, never rebuilt.
+ALLOW_FOREIGN=${KUBEOS_ARCHIVE_ALLOW_FOREIGN:-0}
 
 INDEX_DIR="dists/$SUITE/$COMPONENT/binary-$ARCH"
 
@@ -63,7 +70,10 @@ esac
 
 case "$PKG" in
     kubeos-*) : ;;
-    *) die "$PKG is not a KubeOS package (refusing to publish foreign content)" ;;
+    *)
+        [ "$ALLOW_FOREIGN" = 1 ] || die "$PKG is not a KubeOS package (refusing to publish foreign content)"
+        log "mirroring vendor package $PKG $VER unchanged (KUBEOS_ARCHIVE_ALLOW_FOREIGN=1)"
+        ;;
 esac
 
 LETTER=$(printf '%s' "$PKG" | cut -c1)

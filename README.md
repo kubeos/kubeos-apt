@@ -55,7 +55,9 @@ Set `KUBEOS_PUBLISH_DRY_RUN=1` to see exactly what would be uploaded.
   changes content).
 - **Idempotence**: publishing the same version again replaces its stanza instead of
   duplicating it.
-- **Refusal**: it publishes only `kubeos-*` packages of the one architecture it is told to.
+- **Refusal**: it publishes only `kubeos-*` packages of the one architecture it is told to —
+  unless `KUBEOS_ARCHIVE_ALLOW_FOREIGN=1`, the single documented exception used to mirror the
+  Kubernetes debs unchanged (`kubeos-kubernetes/bin/mirror.sh`, user decision 2026-11-19).
 - **Proof**: after uploading, it re-reads `InRelease` and verifies the signature against the
   local keyring, so a broken publish fails loudly instead of silently.
 
