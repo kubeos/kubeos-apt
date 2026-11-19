@@ -47,7 +47,12 @@ PKG=$(dpkg-deb -f "$DEB" Package)
 VER=$(dpkg-deb -f "$DEB" Version)
 DEB_ARCH=$(dpkg-deb -f "$DEB" Architecture)
 [ -n "$PKG" ] && [ -n "$VER" ] || die "$DEB has no Package/Version field"
-[ "$DEB_ARCH" = "$ARCH" ] || die "$DEB is $DEB_ARCH, this archive publishes $ARCH"
+# "all" is architecture independent and belongs in every architecture index, so it is
+# accepted alongside the architecture this archive serves.
+case "$DEB_ARCH" in
+    "$ARCH"|all) : ;;
+    *) die "$DEB is $DEB_ARCH, this archive publishes $ARCH and all" ;;
+esac
 
 case "$PKG" in
     kubeos-*) : ;;
