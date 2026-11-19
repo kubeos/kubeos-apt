@@ -21,6 +21,8 @@
 #   KUBEOS_GPG_KEY              signing key id or uid                  (default: default key)
 #   KUBEOS_GPG_PASSPHRASE_FILE  file holding its passphrase (unattended signing)
 #   KUBEOS_PUBLISH_DRY_RUN      1 = print what would be uploaded, write nothing
+#   KUBEOS_ARCHIVE_URL          public base URL, e.g. https://repo.kubeos.in; when set,
+#                               every uploaded index file is re-read over HTTPS and compared
 set -eu
 
 REMOTE=${KUBEOS_ARCHIVE_REMOTE:-r2:kubeos-repo}
@@ -29,6 +31,11 @@ COMPONENT=${KUBEOS_ARCHIVE_COMPONENT:-main}
 ARCH=${KUBEOS_ARCHIVE_ARCH:-amd64}
 GPG_KEY=${KUBEOS_GPG_KEY:-}
 DRY_RUN=${KUBEOS_PUBLISH_DRY_RUN:-0}
+# The bucket is served through a CDN, so "uploaded" is not the same as "served". When this
+# URL is set, every index file is re-read over HTTPS and compared with what was uploaded;
+# that is the only check that catches a stale edge copy, which is what made apt answer
+# "Hash Sum mismatch" on 2026-11-19.
+ARCHIVE_URL=${KUBEOS_ARCHIVE_URL:-}
 
 INDEX_DIR="dists/$SUITE/$COMPONENT/binary-$ARCH"
 
@@ -164,6 +171,31 @@ upload "$WORK/InRelease" "dists/$SUITE/InRelease" "no-cache"
 fetch "dists/$SUITE/InRelease" "$WORK/InRelease.remote" || die "InRelease is unreadable after upload"
 gpg --verify "$WORK/InRelease.remote" >/dev/null 2>&1 \
     || die "the published InRelease does not verify against the local keyring"
+
+# --- 6. prove the CDN serves what was uploaded -------------------------------------
+if [ -n "$ARCHIVE_URL" ]; then
+    verify_served() {   # verify_served LOCAL_PATH REMOTE_PATH
+        _want=$(sha256sum "$1" | cut -d' ' -f1)
+        _i=0
+        while [ "$_i" -lt 6 ]; do
+            _got=$(curl -fsS -m 20 "$ARCHIVE_URL/$2" 2>/dev/null | sha256sum | cut -d' ' -f1) || _got=""
+            if [ "$_got" = "$_want" ]; then
+                log "served OK: $2"
+                return 0
+            fi
+            _i=$((_i + 1))
+            [ "$_i" -lt 6 ] && sleep 10
+        done
+        die "$2 is NOT what the CDN serves (uploaded ${_want}, served ${_got:-nothing}).
+    The bucket is right and the edge is stale. Cache the archive correctly in Cloudflare:
+    a Cache Rule for <host>/dists/* with 'Bypass cache' (or Edge TTL 'Respect origin'),
+    leaving /pool/* cacheable. Until then apt reports 'Hash Sum mismatch'."
+    }
+    verify_served "$WORK/Packages.new" "$INDEX_DIR/Packages"
+    verify_served "$WORK/Packages.gz" "$INDEX_DIR/Packages.gz"
+    verify_served "$WORK/Release" "dists/$SUITE/Release"
+    verify_served "$WORK/InRelease" "dists/$SUITE/InRelease"
+fi
 
 COUNT=$(grep -c '^Package: ' "$WORK/Packages.new" || true)
 log "published $PKG $VER; the archive lists $COUNT package(s) in $SUITE/$COMPONENT/$ARCH"
