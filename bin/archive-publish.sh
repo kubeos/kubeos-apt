@@ -68,8 +68,18 @@ case "$DEB_ARCH" in
     *) die "$DEB is $DEB_ARCH, this archive publishes $ARCH and all" ;;
 esac
 
+# Two names count as KubeOS's own:
+#   kubeos-*   the product packages (kubeos-cli, kubeos-branding, ...);
+#   *-kubeos   a build of ours that has to carry a Debian-conventional name, which is exactly
+#              the kernel: linux-image-<version>-kubeos and its flavour meta linux-image-kubeos,
+#              the same shape as Debian's linux-image-amd64, because live-build installs
+#              "${--linux-packages}-${--linux-flavours}" and finds the kernel by globbing
+#              vmlinuz-*<flavour> - so the flavour has to be "kubeos" and the names cannot
+#              start with kubeos- (user decision 2026-11-22: KubeOS ships its own kernel).
+#              Debian never produces a package with this suffix, so the guard still holds.
+# Anything else is foreign content and needs the deliberate mirror exception below.
 case "$PKG" in
-    kubeos-*) : ;;
+    kubeos-*|*-kubeos) : ;;
     *)
         [ "$ALLOW_FOREIGN" = 1 ] || die "$PKG is not a KubeOS package (refusing to publish foreign content)"
         log "mirroring vendor package $PKG $VER unchanged (KUBEOS_ARCHIVE_ALLOW_FOREIGN=1)"
